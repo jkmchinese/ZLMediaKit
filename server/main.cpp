@@ -32,8 +32,13 @@
 #include "../webrtc/WebRtcSession.h"
 #endif
 
+#if defined(ENABLE_SRT)
+#include "../srt/SrtSession.hpp"
+#include "../srt/SrtTransport.hpp"
+#endif
+
 #if defined(ENABLE_VERSION)
-#include "Version.h"
+#include "version.h"
 #endif
 
 #if !defined(_WIN32)
@@ -160,6 +165,7 @@ public:
                              [](const std::shared_ptr<ostream> &stream, const string &arg) -> bool {
                                  //版本信息
                                  *stream << "编译日期: " << BUILD_TIME << std::endl;
+                                 *stream << "代码日期: " << COMMIT_TIME << std::endl;
                                  *stream << "当前git分支: " << BRANCH_NAME << std::endl;
                                  *stream << "当前git hash值: " << COMMIT_HASH << std::endl;
                                  throw ExitException();
@@ -206,9 +212,10 @@ int start_main(int argc,char *argv[]) {
 
 #if !defined(_WIN32)
         pid_t pid = getpid();
+        bool kill_parent_if_failed = true;
         if (bDaemon) {
             //启动守护进程
-            System::startDaemon();
+            System::startDaemon(kill_parent_if_failed);
         }
         //开启崩溃捕获等
         System::systemSetup();
@@ -216,6 +223,9 @@ int start_main(int argc,char *argv[]) {
 
         //启动异步日志线程
         Logger::Instance().setWriter(std::make_shared<AsyncLogWriter>());
+
+        InfoL << kServerName;
+
         //加载配置文件，如果配置文件不存在就创建一个
         loadIniConfig(g_ini_file.data());
 
@@ -267,9 +277,10 @@ int start_main(int argc,char *argv[]) {
 #endif//defined(ENABLE_RTPPROXY)
 
 #if defined(ENABLE_WEBRTC)
+        auto rtcSrv_tcp = std::make_shared<TcpServer>();
         //webrtc udp服务器
-        auto rtcSrv = std::make_shared<UdpServer>();
-        rtcSrv->setOnCreateSocket([](const EventPoller::Ptr &poller, const Buffer::Ptr &buf, struct sockaddr *, int) {
+        auto rtcSrv_udp = std::make_shared<UdpServer>();
+        rtcSrv_udp->setOnCreateSocket([](const EventPoller::Ptr &poller, const Buffer::Ptr &buf, struct sockaddr *, int) {
             if (!buf) {
                 return Socket::createSocket(poller, false);
             }
@@ -280,8 +291,27 @@ int start_main(int argc,char *argv[]) {
             }
             return Socket::createSocket(new_poller, false);
         });
-        uint16_t rtcPort = mINI::Instance()[RTC::kPort];
+        uint16_t rtcPort = mINI::Instance()[Rtc::kPort];
+        uint16_t rtcTcpPort = mINI::Instance()[Rtc::kTcpPort];
 #endif//defined(ENABLE_WEBRTC)
+
+
+#if defined(ENABLE_SRT)
+        auto srtSrv = std::make_shared<UdpServer>();
+        srtSrv->setOnCreateSocket([](const EventPoller::Ptr &poller, const Buffer::Ptr &buf, struct sockaddr *, int) {
+            if (!buf) {
+                return Socket::createSocket(poller, false);
+            }
+            auto new_poller = SRT::SrtSession::queryPoller(buf);
+            if (!new_poller) {
+                //握手第一阶段
+                return Socket::createSocket(poller, false);
+            }
+            return Socket::createSocket(new_poller, false);
+        });
+
+        uint16_t srtPort = mINI::Instance()[SRT::kPort];
+#endif //defined(ENABLE_SRT)
 
         try {
             //rtsp服务器，端口默认554
@@ -309,15 +339,24 @@ int start_main(int argc,char *argv[]) {
 
 #if defined(ENABLE_WEBRTC)
             //webrtc udp服务器
-            if (rtcPort) { rtcSrv->start<WebRtcSession>(rtcPort); }
+            if (rtcPort) { rtcSrv_udp->start<WebRtcSession>(rtcPort);}
+
+            if (rtcTcpPort) { rtcSrv_tcp->start<WebRtcSession>(rtcTcpPort);}
+             
 #endif//defined(ENABLE_WEBRTC)
+
+#if defined(ENABLE_SRT)
+        // srt udp服务器
+        if(srtPort) { srtSrv->start<SRT::SrtSession>(srtPort); }
+#endif//defined(ENABLE_SRT)
 
         } catch (std::exception &ex) {
             WarnL << "端口占用或无权限:" << ex.what() << endl;
             ErrorL << "程序启动失败，请修改配置文件中端口号后重试!" << endl;
             sleep(1);
 #if !defined(_WIN32)
-            if (pid != getpid()) {
+            if (pid != getpid() && kill_parent_if_failed) {
+                //杀掉守护进程
                 kill(pid, SIGINT);
             }
 #endif

@@ -14,6 +14,7 @@
 #include "Record/MP4Recorder.h"
 #include "Http/HttpSession.h"
 #include "Http/HttpBody.h"
+
 #include "Http/HttpClient.h"
 #include "Rtsp/RtspSession.h"
 
@@ -149,7 +150,7 @@ API_EXPORT const char* API_CALL mk_media_info_get_host(const mk_media_info ctx){
 API_EXPORT uint16_t API_CALL mk_media_info_get_port(const mk_media_info ctx){
     assert(ctx);
     MediaInfo *info = (MediaInfo *)ctx;
-    return std::stoi(info->_port);
+    return info->_port;
 }
 
 API_EXPORT const char* API_CALL mk_media_info_get_app(const mk_media_info ctx){
@@ -211,7 +212,14 @@ API_EXPORT int API_CALL mk_media_source_seek_to(const mk_media_source ctx,uint32
 API_EXPORT void API_CALL mk_media_source_start_send_rtp(const mk_media_source ctx, const char *dst_url, uint16_t dst_port, const char *ssrc, int is_udp, on_mk_media_source_send_rtp_result cb, void *user_data){
     assert(ctx && dst_url && ssrc);
     MediaSource *src = (MediaSource *)ctx;
-    src->startSendRtp(dst_url, dst_port, ssrc, is_udp, 0, [cb, user_data](uint16_t local_port, const SockException &ex){
+
+    MediaSourceEvent::SendRtpArgs args;
+    args.dst_url = dst_url;
+    args.dst_port = dst_port;
+    args.ssrc = ssrc;
+    args.is_udp = is_udp;
+
+    src->startSendRtp(args, [cb, user_data](uint16_t local_port, const SockException &ex){
         if (cb) {
             cb(user_data, local_port, ex.getErrCode(), ex.what());
         }
@@ -228,10 +236,11 @@ API_EXPORT void API_CALL mk_media_source_find(const char *schema,
                                               const char *vhost,
                                               const char *app,
                                               const char *stream,
+                                              int from_mp4,
                                               void *user_data,
                                               on_mk_media_source_find_cb cb) {
     assert(schema && vhost && app && stream && cb);
-    auto src = MediaSource::find(schema, vhost, app, stream);
+    auto src = MediaSource::find(schema, vhost, app, stream, from_mp4);
     cb(user_data, src.get());
 }
 

@@ -15,10 +15,9 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
-#include "Util/util.h"
-#include "Common/config.h"
 #include "Common/macros.h"
 #include "Extension/Frame.h"
+#include "Network/Socket.h"
 
 namespace mediakit {
 
@@ -123,7 +122,7 @@ public:
     //返回有效负载指针,跳过csrc、ext
     uint8_t* getPayloadData();
     //返回有效负载总长度,不包括csrc、ext、padding
-    size_t getPayloadSize(size_t rtp_size) const;
+    ssize_t getPayloadSize(size_t rtp_size) const;
     //打印调试信息
     std::string dumpString(size_t rtp_size) const;
 
@@ -159,7 +158,7 @@ public:
     uint16_t getSeq() const;
     uint32_t getStamp() const;
     //主机字节序的时间戳，已经转换为毫秒
-    uint32_t getStampMS(bool ntp = true) const;
+    uint64_t getStampMS(bool ntp = true) const;
     //主机字节序的ssrc
     uint32_t getSSRC() const;
     //有效负载，跳过csrc、ext
@@ -217,7 +216,7 @@ public:
     std::string getControlUrl(const std::string &base_url) const;
 
 public:
-    int _pt;
+    int _pt = 0xff;
     int _channel;
     int _samplerate;
     TrackType _type;
@@ -250,27 +249,6 @@ public:
 
 private:
     std::vector<SdpTrack::Ptr> _track_vec;
-};
-
-/**
- * 解析rtsp url的工具类
- */
-class RtspUrl{
-public:
-    bool _is_ssl;
-    uint16_t _port;
-    std::string _url;
-    std::string _user;
-    std::string _passwd;
-    std::string _host;
-
-public:
-    RtspUrl() = default;
-    ~RtspUrl() = default;
-    bool parse(const std::string &url);
-
-private:
-    bool setup(bool,const std::string &, const std::string &, const std::string &);
 };
 
 /**
@@ -333,30 +311,7 @@ public:
      */
     TitleSdp(float dur_sec = 0,
              const std::map<std::string, std::string> &header = std::map<std::string, std::string>(),
-             int version = 0) : Sdp(0, 0) {
-        _printer << "v=" << version << "\r\n";
-
-        if (!header.empty()) {
-            for (auto &pr : header) {
-                _printer << pr.first << "=" << pr.second << "\r\n";
-            }
-        } else {
-            _printer << "o=- 0 0 IN IP4 0.0.0.0\r\n";
-            _printer << "s=Streamed by " << kServerName << "\r\n";
-            _printer << "c=IN IP4 0.0.0.0\r\n";
-            _printer << "t=0 0\r\n";
-        }
-
-        if (dur_sec <= 0) {
-            //直播
-            _printer << "a=range:npt=now-\r\n";
-        } else {
-            //点播
-            _dur_sec = dur_sec;
-            _printer << "a=range:npt=0-" << dur_sec << "\r\n";
-        }
-        _printer << "a=control:*\r\n";
-    }
+             int version = 0);
 
     std::string getSdp() const override {
         return _printer;
@@ -378,7 +333,7 @@ private:
 //创建rtp over tcp4个字节的头
 toolkit::Buffer::Ptr makeRtpOverTcpPrefix(uint16_t size, uint8_t interleaved);
 //创建rtp-rtcp端口对
-void makeSockPair(std::pair<toolkit::Socket::Ptr, toolkit::Socket::Ptr> &pair, const std::string &local_ip);
+void makeSockPair(std::pair<toolkit::Socket::Ptr, toolkit::Socket::Ptr> &pair, const std::string &local_ip, bool re_use_port = false, bool is_udp = true);
 //十六进制方式打印ssrc
 std::string printSSRC(uint32_t ui32Ssrc);
 

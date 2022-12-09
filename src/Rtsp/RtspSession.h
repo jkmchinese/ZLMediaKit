@@ -14,45 +14,18 @@
 #include <set>
 #include <vector>
 #include <unordered_set>
-#include <unordered_map>
-#include "Util/util.h"
-#include "Util/logger.h"
-#include "Common/config.h"
-#include "Network/TcpSession.h"
-#include "Player/PlayerBase.h"
-#include "RtpMultiCaster.h"
-#include "RtspMediaSource.h"
+#include "Network/Session.h"
 #include "RtspSplitter.h"
 #include "RtpReceiver.h"
-#include "RtspMediaSourceImp.h"
-#include "Common/Stamp.h"
 #include "Rtcp/RtcpContext.h"
+#include "RtspMediaSource.h"
+#include "RtspMediaSourceImp.h"
+#include "RtpMultiCaster.h"
 
 namespace mediakit {
 
-class RtspSession;
-
-class BufferRtp : public toolkit::Buffer{
-public:
-    using Ptr = std::shared_ptr<BufferRtp>;
-
-    BufferRtp(Buffer::Ptr pkt, size_t offset = 0) : _offset(offset), _rtp(std::move(pkt)) {}
-    ~BufferRtp() override {}
-
-    char *data() const override {
-        return (char *)_rtp->data() + _offset;
-    }
-
-    size_t size() const override {
-        return _rtp->size() - _offset;
-    }
-
-private:
-    size_t _offset;
-    Buffer::Ptr _rtp;
-};
-
-class RtspSession : public toolkit::TcpSession, public RtspSplitter, public RtpReceiver, public MediaSourceEvent {
+using BufferRtp = toolkit::BufferOffset<toolkit::Buffer::Ptr>;
+class RtspSession : public toolkit::Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent {
 public:
     using Ptr = std::shared_ptr<RtspSession>;
     using onGetRealm = std::function<void(const std::string &realm)>;
@@ -62,7 +35,7 @@ public:
 
     RtspSession(const toolkit::Socket::Ptr &sock);
     virtual ~RtspSession();
-    ////TcpSession override////
+    ////Session override////
     void onRecv(const toolkit::Buffer::Ptr &buf) override;
     void onError(const toolkit::SockException &err) override;
     void onManager() override;
@@ -82,7 +55,7 @@ protected:
 
     ///////MediaSourceEvent override///////
     // 关闭
-    bool close(MediaSource &sender, bool force) override;
+    bool close(MediaSource &sender) override;
     // 播放总人数
     int totalReaderCount(MediaSource &sender) override;
     // 获取媒体源类型
@@ -91,8 +64,10 @@ protected:
     std::string getOriginUrl(MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
     std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    // 由于支持断连续推，存在OwnerPoller变更的可能
+    toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
-    /////TcpSession override////
+    /////Session override////
     ssize_t send(toolkit::Buffer::Ptr pkt) override;
     //收到RTCP包回调
     virtual void onRtcpPacket(int track_idx, SdpTrack::Ptr &track, const char *data, size_t len);
@@ -133,7 +108,7 @@ private:
     int getTrackIndexByControlUrl(const std::string &control_url);
     int getTrackIndexByInterleaved(int interleaved);
     //一般用于接收udp打洞包，也用于rtsp推流
-    void onRcvPeerUdpData(int interleaved, const toolkit::Buffer::Ptr &buf, const struct sockaddr &addr);
+    void onRcvPeerUdpData(int interleaved, const toolkit::Buffer::Ptr &buf, const struct sockaddr_storage &addr);
     //配合onRcvPeerUdpData使用
     void startListenPeerUdpData(int track_idx);
     ////rtsp专有认证相关////
@@ -163,6 +138,9 @@ private:
 private:
     //是否已经触发on_play事件
     bool _emit_on_play = false;
+    bool _send_sr_rtcp[2] = {true, true};
+    //断连续推延时
+    uint32_t _continue_push_ms = 0;
     //推流或拉流客户端采用的rtp传输方式
     Rtsp::eRtpType _rtp_type = Rtsp::RTP_Invalid;
     //收到的seq，回复时一致
@@ -192,6 +170,8 @@ private:
     RtspMediaSource::RingType::RingReader::Ptr _play_reader;
     //sdp里面有效的track,包含音频或视频
     std::vector<SdpTrack::Ptr> _sdp_track;
+    //播放器setup指定的播放track,默认为TrackInvalid表示不指定即音视频都推
+    TrackType _target_play_track = TrackInvalid;
 
     ////////RTP over udp////////
     //RTP端口,trackid idx 为数组下标
@@ -213,13 +193,12 @@ private:
     toolkit::Ticker _rtcp_send_tickers[2];
     //统计rtp并发送rtcp
     std::vector<RtcpContext::Ptr> _rtcp_context;
-    bool _send_sr_rtcp[2] = {true, true};
 };
 
 /**
  * 支持ssl加密的rtsp服务器，可用于诸如亚马逊echo show这样的设备访问
  */
-using RtspSessionWithSSL = toolkit::TcpSessionWithSSL<RtspSession>;
+using RtspSessionWithSSL = toolkit::SessionWithSSL<RtspSession>;
 
 } /* namespace mediakit */
 

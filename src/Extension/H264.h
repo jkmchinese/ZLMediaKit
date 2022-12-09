@@ -13,7 +13,6 @@
 
 #include "Frame.h"
 #include "Track.h"
-#include "Util/base64.h"
 
 #define H264_TYPE(v) ((uint8_t)(v) & 0x1F)
 
@@ -138,7 +137,7 @@ private:
     void insertConfigFrame(const Frame::Ptr &frame);
 
 private:
-    bool _is_idr = false;
+    bool _latest_is_config_frame = false;
     int _width = 0;
     int _height = 0;
     float _fps = 0;

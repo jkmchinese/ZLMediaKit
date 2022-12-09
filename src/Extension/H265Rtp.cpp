@@ -69,7 +69,7 @@ H265Frame::Ptr H265RtpDecoder::obtainFrame() {
 |                               :    ...OPTIONAL RTP padding    |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 */
-bool H265RtpDecoder::unpackAp(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint32_t stamp){
+bool H265RtpDecoder::unpackAp(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp){
     bool have_key_frame = false;
     //忽略PayloadHdr
     CHECK_SIZE(size, 2, have_key_frame);
@@ -119,7 +119,7 @@ bool H265RtpDecoder::unpackAp(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssi
 +---------------+
 */
 
-bool H265RtpDecoder::mergeFu(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint32_t stamp, uint16_t seq){
+bool H265RtpDecoder::mergeFu(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp, uint16_t seq){
     CHECK_SIZE(size, 4, false);
     auto s_bit = ptr[2] >> 7;
     auto e_bit = (ptr[2] >> 6) & 0x01;
@@ -185,8 +185,12 @@ bool H265RtpDecoder::inputRtp(const RtpPacket::Ptr &rtp, bool) {
 }
 
 bool H265RtpDecoder::decodeRtp(const RtpPacket::Ptr &rtp) {
+    auto payload_size = rtp->getPayloadSize();
+    if (payload_size <= 0) {
+        //无实际负载
+        return false;
+    }
     auto frame = rtp->getPayload();
-    auto length = rtp->getPayloadSize();
     auto stamp = rtp->getStampMS();
     auto seq = rtp->getSeq();
     int nal = H265_TYPE(frame[0]);
@@ -194,16 +198,16 @@ bool H265RtpDecoder::decodeRtp(const RtpPacket::Ptr &rtp) {
     switch (nal) {
         case 48:
             // aggregated packet (AP) - with two or more NAL units
-            return unpackAp(rtp, frame, length, stamp);
+            return unpackAp(rtp, frame, payload_size, stamp);
 
         case 49:
             // fragmentation unit (FU)
-            return mergeFu(rtp, frame, length, stamp, seq);
+            return mergeFu(rtp, frame, payload_size, stamp, seq);
 
         default: {
             if (nal < 48) {
                 // Single NAL Unit Packets (p24)
-                return singleFrame(rtp, frame, length, stamp);
+                return singleFrame(rtp, frame, payload_size, stamp);
             }
             _gop_dropped = true;
             WarnL << "不支持该类型的265 RTP包, nal type" << nal << ", rtp:\r\n" << rtp->dumpString();
@@ -212,7 +216,7 @@ bool H265RtpDecoder::decodeRtp(const RtpPacket::Ptr &rtp) {
     }
 }
 
-bool H265RtpDecoder::singleFrame(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint32_t stamp){
+bool H265RtpDecoder::singleFrame(const RtpPacket::Ptr &rtp, const uint8_t *ptr, ssize_t size, uint64_t stamp){
     _frame->_buffer.assign("\x00\x00\x00\x01", 4);
     _frame->_buffer.append((char *) ptr, size);
     _frame->_pts = stamp;

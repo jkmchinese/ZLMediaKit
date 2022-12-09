@@ -11,7 +11,6 @@
 #ifndef HTTP_HLSPLAYER_H
 #define HTTP_HLSPLAYER_H
 
-#include "Common/Stamp.h"
 #include "Player/PlayerBase.h"
 #include "HttpTSPlayer.h"
 #include "HlsParser.h"
@@ -19,6 +18,7 @@
 
 #define MIN_TIMEOUT_MULTIPLE 2
 #define MAX_TIMEOUT_MULTIPLE 5
+#define MAX_TRY_FETCH_INDEX_TIMES 5
 
 namespace mediakit {
 
@@ -33,6 +33,7 @@ public:
     void addTrackCompleted() override { _delegate.addTrackCompleted(); }
     void resetTracks() override { ((MediaSink &)_delegate).resetTracks(); }
     std::vector<Track::Ptr> getTracks(bool ready = true) const override { return _delegate.getTracks(ready); }
+    void pushTask(std::function<void()> task);
 
 private:
     void onTick();
@@ -45,7 +46,7 @@ private:
     toolkit::Ticker _ticker;
     toolkit::Timer::Ptr _timer;
     MediaSinkDelegate _delegate;
-    std::multimap<int64_t, Frame::Ptr> _frame_cache;
+    std::deque<std::pair<int64_t, std::function<void()> > > _frame_cache;
 };
 
 class HlsPlayer : public  HttpClientImp , public PlayerBase , public HlsParser{
@@ -105,11 +106,12 @@ private:
     std::set<std::string, UrlComp> _ts_url_cache;
     HttpTSPlayer::Ptr _http_ts_player;
     int _timeout_multiple = MIN_TIMEOUT_MULTIPLE;
+    int _try_fetch_index_times = 0;
 };
 
 class HlsPlayerImp : public PlayerImp<HlsPlayer, PlayerBase>, private TrackListener {
 public:
-    typedef std::shared_ptr<HlsPlayerImp> Ptr;
+    using Ptr = std::shared_ptr<HlsPlayerImp>;
     HlsPlayerImp(const toolkit::EventPoller::Ptr &poller = nullptr);
     ~HlsPlayerImp() override = default;
 

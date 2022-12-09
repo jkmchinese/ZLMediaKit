@@ -13,36 +13,36 @@
 #if defined(ENABLE_RTPPROXY)
 #include "PSEncoder.h"
 #include "Extension/CommonRtp.h"
+#include "Rtcp/RtcpContext.h"
+#include "Common/MediaSource.h"
+#include "Common/MediaSink.h"
 
 namespace mediakit{
 
 //rtp发送客户端，支持发送GB28181协议
-class RtpSender : public MediaSinkInterface, public std::enable_shared_from_this<RtpSender>{
+class RtpSender final : public MediaSinkInterface, public std::enable_shared_from_this<RtpSender>{
 public:
-    typedef std::shared_ptr<RtpSender> Ptr;
+    using Ptr = std::shared_ptr<RtpSender>;
 
+    RtpSender(toolkit::EventPoller::Ptr poller = nullptr);
     ~RtpSender() override;
 
     /**
-     * 构造函数，创建GB28181 RTP发送客户端
-     * @param ssrc rtp的ssrc
-     * @param payload_type 国标中ps-rtp的pt一般为96
-     */
-    RtpSender(uint32_t ssrc, uint8_t payload_type = 96);
-
-    /**
      * 开始发送ps-rtp包
-     * @param dst_url 目标ip或域名
-     * @param dst_port 目标端口
-     * @param is_udp 是否采用udp方式发送rtp
+     * @param args 发送参数
      * @param cb 连接目标端口是否成功的回调
      */
-    void startSend(const std::string &dst_url, uint16_t dst_port, bool is_udp, uint16_t src_port, const std::function<void(uint16_t local_port, const toolkit::SockException &ex)> &cb);
+    void startSend(const MediaSourceEvent::SendRtpArgs &args, const std::function<void(uint16_t local_port, const toolkit::SockException &ex)> &cb);
 
     /**
      * 输入帧数据
      */
     bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 刷新输出frame缓存
+     */
+    void flush() override;
 
     /**
      * 添加track，内部会调用Track的clone方法
@@ -61,24 +61,31 @@ public:
      */
     virtual void resetTracks() override;
 
+    void setOnClose(std::function<void(const toolkit::SockException &ex)> on_close);
+
 private:
     //合并写输出
     void onFlushRtpList(std::shared_ptr<toolkit::List<toolkit::Buffer::Ptr> > rtp_list);
     //udp/tcp连接成功回调
     void onConnect();
     //异常断开socket事件
-    void onErr(const toolkit::SockException &ex, bool is_connect = false);
+    void onErr(const toolkit::SockException &ex);
+    void createRtcpSocket();
+    void onRecvRtcp(RtcpHeader *rtcp);
+    void onSendRtpUdp(const toolkit::Buffer::Ptr &buf, bool check);
+    void onClose(const toolkit::SockException &ex);
 
 private:
-    bool _is_udp;
     bool _is_connect = false;
-    std::string _dst_url;
-    uint16_t _dst_port;
-	uint16_t _src_port;
-    toolkit::Socket::Ptr _socket;
+    MediaSourceEvent::SendRtpArgs _args;
+    toolkit::Socket::Ptr _socket_rtp;
+    toolkit::Socket::Ptr _socket_rtcp;
     toolkit::EventPoller::Ptr _poller;
-    toolkit::Timer::Ptr _connect_timer;
     MediaSinkInterface::Ptr _interface;
+    std::shared_ptr<RtcpContext> _rtcp_context;
+    toolkit::Ticker _rtcp_send_ticker;
+    toolkit::Ticker _rtcp_recv_ticker;
+    std::function<void(const toolkit::SockException &ex)> _on_close;
 };
 
 }//namespace mediakit
